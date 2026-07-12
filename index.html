@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Korea & US Investment Briefing</title>
+    <meta name="description" content="한국 및 미국 주식과 ETF를 분석하는 투자 브리핑 MVP" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Asia/Seoul 기준</p>
+        <h1>Korea & US Investment Briefing</h1>
+      </div>
+      <div class="topbar__actions">
+        <div class="status" id="dataStatus">DEMO DATA</div>
+        <button class="icon-button" id="themeToggle" aria-label="테마 전환" title="테마 전환">◐</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="브리핑 보기">
+      <button class="tab is-active" data-tab="today">오늘</button>
+      <button class="tab" data-tab="kr-stock">한국 주식</button>
+      <button class="tab" data-tab="us-stock">미국 주식</button>
+      <button class="tab" data-tab="kr-etf">한국 ETF</button>
+      <button class="tab" data-tab="us-etf">미국 ETF</button>
+    </nav>
+
+    <main>
+      <section class="metrics-grid" aria-label="시장 지표">
+        <article class="metric">
+          <div class="metric__summary">
+            <span>S&amp;P 500</span>
+            <strong id="metricSp"></strong>
+            <em id="metricSpChange"></em>
+            <dl class="metric__stats">
+              <div><dt>현재</dt><dd id="metricSpCurrent"></dd></div>
+              <div><dt>최고</dt><dd id="metricSpHigh"></dd></div>
+              <div><dt>최저</dt><dd id="metricSpLow"></dd></div>
+            </dl>
+          </div>
+          <canvas class="index-chart" id="spChart" width="1100" height="320" aria-label="S&P 500 1년 주봉 캔들차트"></canvas>
+        </article>
+        <article class="metric">
+          <div class="metric__summary">
+            <span>NASDAQ</span>
+            <strong id="metricNasdaq"></strong>
+            <em id="metricNasdaqChange"></em>
+            <dl class="metric__stats">
+              <div><dt>현재</dt><dd id="metricNasdaqCurrent"></dd></div>
+              <div><dt>최고</dt><dd id="metricNasdaqHigh"></dd></div>
+              <div><dt>최저</dt><dd id="metricNasdaqLow"></dd></div>
+            </dl>
+          </div>
+          <canvas class="index-chart" id="nasdaqChart" width="1100" height="320" aria-label="NASDAQ 1년 주봉 캔들차트"></canvas>
+        </article>
+        <article class="metric">
+          <div class="metric__summary">
+            <span>KOSPI</span>
+            <strong id="metricKospi"></strong>
+            <em id="metricKospiChange"></em>
+            <dl class="metric__stats">
+              <div><dt>현재</dt><dd id="metricKospiCurrent"></dd></div>
+              <div><dt>최고</dt><dd id="metricKospiHigh"></dd></div>
+              <div><dt>최저</dt><dd id="metricKospiLow"></dd></div>
+            </dl>
+          </div>
+          <canvas class="index-chart" id="kospiChart" width="1100" height="320" aria-label="KOSPI 1년 주봉 캔들차트"></canvas>
+        </article>
+      </section>
+
+      <section class="top-picks-section" aria-label="오늘의 TOP 3">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">오늘의 TOP 3</p>
+            <h2>시장별 추천 요약</h2>
+          </div>
+        </div>
+        <div class="top-picks-table" id="briefingTopPicks"></div>
+      </section>
+
+      <section class="results-section">
+        <section class="results">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">선정 결과</p>
+              <h2 id="resultTitle">시장별 TOP Picks</h2>
+              <p class="section-subtitle">실제 OHLCV 기반 모멘텀, 거래량, 변동성, 최대낙폭을 반영한 점수입니다.</p>
+            </div>
+            <div class="segmented" role="group" aria-label="보기 방식">
+              <button class="is-active" id="cardView">카드</button>
+              <button id="tableView">표</button>
+            </div>
+          </div>
+          <div class="cards" id="recommendationCards"></div>
+          <div class="result-table-view is-hidden" id="recommendationTable"></div>
+        </section>
+      </section>
+
+      <section class="tab-chart-section is-hidden" id="tabPickCharts" aria-label="TOP 3 주봉 캔들차트">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">TOP 3 차트</p>
+            <h2 id="tabChartTitle">TOP 3 주봉 캔들차트</h2>
+            <p class="section-subtitle">각 선정 종목을 주봉 기준 10이평선과 거래량 그래프로 확인합니다.</p>
+          </div>
+        </div>
+        <div class="tab-chart-list" id="tabChartList"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">상세 캔들차트</p>
+            <h2 id="chartTitle">S&P 500 일봉</h2>
+          </div>
+          <div class="toolbar" role="group" aria-label="차트 설정">
+            <select id="chartInstrument">
+              <option value="SPX">S&P 500</option>
+              <option value="IXIC">NASDAQ Composite</option>
+              <option value="KOSPI">KOSPI</option>
+              <option value="005930">삼성전자</option>
+              <option value="NVDA">NVIDIA</option>
+            </select>
+            <select id="chartPeriod">
+              <option value="daily">일봉</option>
+              <option value="weekly" selected>주봉</option>
+              <option value="monthly">월봉</option>
+            </select>
+          </div>
+        </div>
+        <canvas id="candleChart" width="1200" height="520" aria-label="캔들차트"></canvas>
+        <p class="data-note">LIVE DATA. 상세 캔들차트는 선택한 종목과 일봉/주봉/월봉 기준으로 Yahoo Finance 차트 데이터를 조회합니다. 조회 실패 시에만 데모 차트로 대체됩니다.</p>
+      </section>
+
+      <section class="disclaimer">
+        본 서비스의 분석과 추천은 정보 제공을 위한 것이며 투자 권유나 수익 보장을 의미하지 않습니다.
+        투자 결정과 그 결과에 대한 책임은 투자자 본인에게 있습니다. 시장 데이터는 제공처 사정에 따라
+        지연되거나 오류가 발생할 수 있습니다.
+      </section>
+    </main>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
