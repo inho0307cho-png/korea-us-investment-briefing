@@ -1,0 +1,10 @@
+{
+  "name": "korea-us-investment-briefing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Korea and US investment briefing MVP with demo data, scoring, charts, and provider adapter boundaries.",
+  "scripts": {
+    "dev": "python server.py",
+    "start": "python server.py"
+  }
+}
