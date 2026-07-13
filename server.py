@@ -1,11 +1,18 @@
 import json
 import os
 import math
+import smtplib
 import time
 import urllib.parse
 import urllib.request
+import threading
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://web-production-ca090.up.railway.app/")
+SEOUL_TZ = timezone(timedelta(hours=9))
 
 SYMBOLS = {
     "SPX": "^GSPC",
@@ -31,6 +38,28 @@ QUOTE_SYMBOLS = {
     "QQQ": "QQQ",
     "IWM": "IWM",
 }
+
+INSTRUMENTS = {
+    "005930": {"name": "Samsung Electronics", "market": "KR", "assetType": "stock"},
+    "000660": {"name": "SK hynix", "market": "KR", "assetType": "stock"},
+    "035420": {"name": "NAVER", "market": "KR", "assetType": "stock"},
+    "NVDA": {"name": "NVIDIA", "market": "US", "assetType": "stock"},
+    "MSFT": {"name": "Microsoft", "market": "US", "assetType": "stock"},
+    "AAPL": {"name": "Apple", "market": "US", "assetType": "stock"},
+    "TIGERKR10": {"name": "TIGER US Nasdaq 100", "market": "KR", "assetType": "etf"},
+    "TIGER200": {"name": "TIGER 200", "market": "KR", "assetType": "etf"},
+    "KODEX200": {"name": "KODEX 200", "market": "KR", "assetType": "etf"},
+    "SPY": {"name": "SPDR S&P 500 ETF", "market": "US", "assetType": "etf"},
+    "QQQ": {"name": "Invesco QQQ Trust", "market": "US", "assetType": "etf"},
+    "IWM": {"name": "iShares Russell 2000 ETF", "market": "US", "assetType": "etf"},
+}
+
+GROUPS = [
+    ("kr_stock", "한국 주식 TOP 3", "KR", "stock"),
+    ("us_stock", "미국 주식 TOP 3", "US", "stock"),
+    ("kr_etf", "한국 ETF TOP 3", "KR", "etf"),
+    ("us_etf", "미국 ETF TOP 3", "US", "etf"),
+]
 
 CHART_SYMBOLS.update(QUOTE_SYMBOLS)
 
@@ -179,6 +208,53 @@ def analysis_grade(score):
     return "약함"
 
 
+def format_number(value):
+    if value is None:
+        return "-"
+    return f"{value:,.0f}"
+
+
+def format_price(ticker, value):
+    if value is None:
+        return "-"
+    prefix = "$" if INSTRUMENTS.get(ticker, {}).get("market") == "US" else ""
+    suffix = "원" if INSTRUMENTS.get(ticker, {}).get("market") == "KR" else ""
+    return f"{prefix}{format_number(value)}{suffix}"
+
+
+def format_percent(value):
+    if value is None:
+        return "-"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
+
+
+def html_escape(value):
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def reason_sentence(item):
+    factors = item.get("analysis", {}).get("factors", {})
+    parts = []
+    if factors.get("momentum") is not None:
+        parts.append(f"모멘텀 {factors['momentum']}점")
+    if factors.get("trendGrowth") is not None:
+        parts.append(f"추세 품질 {factors['trendGrowth']}점")
+    if factors.get("liquidity") is not None:
+        parts.append(f"유동성 {factors['liquidity']}점")
+    if factors.get("return3m") is not None:
+        parts.append(f"3개월 수익률 {format_percent(factors['return3m'])}")
+    if factors.get("maxDrawdown") is not None:
+        parts.append(f"최대낙폭 {factors['maxDrawdown']:.1f}%")
+    return " / ".join(parts) if parts else "실제 OHLCV 데이터를 기준으로 점수를 산정했습니다."
+
+
 def analyze_ticker(ticker):
     yahoo_symbol = CHART_SYMBOLS[ticker]
     daily = fetch_yahoo_chart(yahoo_symbol, "1y", "1d")
@@ -301,6 +377,244 @@ def analyze_ticker(ticker):
     }
 
 
+def build_report_data():
+    indices = {key: fetch_index(symbol) for key, symbol in SYMBOLS.items()}
+    quote_errors = {}
+    items = []
+    for ticker, meta in INSTRUMENTS.items():
+        try:
+            quote = fetch_quote(QUOTE_SYMBOLS[ticker])
+            analysis = analyze_ticker(ticker)
+            score = analysis["etfScore"] if meta["assetType"] == "etf" else analysis["stockScore"]
+            items.append(
+                {
+                    "ticker": ticker,
+                    "name": meta["name"],
+                    "market": meta["market"],
+                    "assetType": meta["assetType"],
+                    "quote": quote,
+                    "analysis": analysis,
+                    "score": score,
+                    "reason": reason_sentence({"analysis": analysis}),
+                }
+            )
+        except Exception as error:
+            quote_errors[ticker] = str(error)
+
+    ranked_groups = {}
+    for key, label, market, asset_type in GROUPS:
+        ranked_groups[key] = {
+            "label": label,
+            "items": sorted(
+                [item for item in items if item["market"] == market and item["assetType"] == asset_type],
+                key=lambda item: (
+                    item["score"],
+                    item["analysis"]["factors"].get("return3m", 0),
+                    -item["analysis"]["factors"].get("maxDrawdown", 0),
+                ),
+                reverse=True,
+            )[:3],
+        }
+
+    return {
+        "asOf": datetime.now(SEOUL_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "indices": indices,
+        "groups": ranked_groups,
+        "errors": quote_errors,
+    }
+
+
+def build_html_email(report):
+    index_rows = []
+    for key, label in [("SPX", "S&P 500"), ("IXIC", "NASDAQ"), ("KOSPI", "KOSPI")]:
+        item = report["indices"].get(key, {})
+        candles = item.get("candles", [])
+        high = max((candle["high"] for candle in candles), default=None)
+        low = min((candle["low"] for candle in candles), default=None)
+        index_rows.append(
+            f"""
+            <tr>
+              <td>{label}</td>
+              <td style="text-align:right">{format_number(item.get("value"))}</td>
+              <td style="text-align:right">{format_percent(item.get("change"))}</td>
+              <td style="text-align:right">{format_number(high)}</td>
+              <td style="text-align:right">{format_number(low)}</td>
+            </tr>
+            """
+        )
+
+    group_sections = []
+    for group in report["groups"].values():
+        rows = []
+        for rank, item in enumerate(group["items"], 1):
+            rows.append(
+                f"""
+                <tr>
+                  <td style="text-align:center;font-weight:700">{rank}</td>
+                  <td><b>{html_escape(item["name"])}</b><br><span style="color:#64748b">{item["ticker"]}</span></td>
+                  <td style="text-align:right">{format_price(item["ticker"], item["quote"].get("price"))}</td>
+                  <td style="text-align:right">{format_percent(item["quote"].get("change"))}</td>
+                  <td>{html_escape(item["reason"])}</td>
+                  <td style="text-align:right;font-weight:700">{item["score"]}</td>
+                </tr>
+                """
+            )
+        group_sections.append(
+            f"""
+            <h3 style="margin:18px 0 8px;color:#0f766e">{html_escape(group["label"])}</h3>
+            <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #dbe3ea">
+              <thead>
+                <tr style="background:#eef7f5;color:#0f766e">
+                  <th align="center">순위</th>
+                  <th align="left">종목</th>
+                  <th align="right">현재가</th>
+                  <th align="right">변동</th>
+                  <th align="left">선정 근거</th>
+                  <th align="right">점수</th>
+                </tr>
+              </thead>
+              <tbody>{''.join(rows)}</tbody>
+            </table>
+            """
+        )
+
+    return f"""
+    <!doctype html>
+    <html lang="ko">
+      <body style="font-family:Arial,'Malgun Gothic',sans-serif;color:#17202a;line-height:1.55">
+        <h1 style="color:#0f766e;margin-bottom:4px">오늘의 투자 브리핑 - Korea &amp; US Investment Briefing</h1>
+        <p style="margin-top:0;color:#64748b">작성 시각: {report["asOf"]} (Asia/Seoul)</p>
+        <p><a href="{APP_BASE_URL}">{APP_BASE_URL}</a></p>
+
+        <h2 style="color:#0f766e">시장 지표</h2>
+        <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #dbe3ea">
+          <thead>
+            <tr style="background:#0f766e;color:#ffffff">
+              <th align="left">지표</th>
+              <th align="right">현재가</th>
+              <th align="right">등락률</th>
+              <th align="right">1년 최고</th>
+              <th align="right">1년 최저</th>
+            </tr>
+          </thead>
+          <tbody>{''.join(index_rows)}</tbody>
+        </table>
+
+        <h2 style="color:#0f766e;margin-top:22px">오늘의 TOP3 및 선정 결과</h2>
+        {''.join(group_sections)}
+
+        <h2 style="color:#0f766e;margin-top:22px">상세 캔들차트</h2>
+        <p>
+          이메일 본문에서는 보안상 상호작용형 캔들차트를 직접 실행할 수 없습니다.
+          상세 캔들차트(일봉 3개월, 주봉 1년, 월봉 3년)와 거래량 그래프는 아래 대시보드에서 바로 확인하세요.
+        </p>
+        <p><a href="{APP_BASE_URL}" style="display:inline-block;background:#0f766e;color:#fff;padding:10px 14px;text-decoration:none;border-radius:6px">대시보드에서 차트 보기</a></p>
+
+        <p style="margin-top:24px;color:#64748b;font-size:12px">
+          본 메일은 정보 제공 목적이며 투자 권유나 수익 보장을 의미하지 않습니다.
+          투자 결정과 결과의 책임은 투자자 본인에게 있으며, 시장 데이터는 지연되거나 오류가 발생할 수 있습니다.
+        </p>
+      </body>
+    </html>
+    """
+
+
+def send_email_message(subject, html_body):
+    recipients = [item.strip() for item in os.environ.get("BRIEFING_RECIPIENTS", "").split(",") if item.strip()]
+    if not recipients:
+        raise ValueError("BRIEFING_RECIPIENTS is not configured")
+
+    provider = os.environ.get("EMAIL_PROVIDER", "smtp").lower()
+    sender = os.environ.get("EMAIL_FROM") or os.environ.get("SMTP_USERNAME")
+    if not sender:
+        raise ValueError("EMAIL_FROM or SMTP_USERNAME is not configured")
+
+    if provider == "resend":
+        api_key = os.environ.get("RESEND_API_KEY") or os.environ.get("EMAIL_PROVIDER_API_KEY")
+        if not api_key:
+            raise ValueError("RESEND_API_KEY is not configured")
+        payload = json.dumps(
+            {
+                "from": sender,
+                "to": recipients,
+                "subject": subject,
+                "html": html_body,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read().decode("utf-8")
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = sender
+    message["To"] = ", ".join(recipients)
+    message.set_content("HTML 메일을 지원하는 클라이언트에서 오늘의 투자 브리핑을 확인하세요.")
+    message.add_alternative(html_body, subtype="html")
+
+    host = os.environ.get("SMTP_HOST")
+    username = os.environ.get("SMTP_USERNAME")
+    password = os.environ.get("SMTP_PASSWORD")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    if not host or not username or not password:
+        raise ValueError("SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD must be configured")
+
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
+            smtp.login(username, password)
+            smtp.send_message(message)
+    else:
+        with smtplib.SMTP(host, port, timeout=20) as smtp:
+            smtp.starttls()
+            smtp.login(username, password)
+            smtp.send_message(message)
+    return "sent"
+
+
+def send_daily_briefing():
+    report = build_report_data()
+    subject = "오늘의 투자 브리핑 - Korea & US Investment Briefing"
+    html_body = build_html_email(report)
+    result = send_email_message(subject, html_body)
+    print(f"[briefing-email] sent at {report['asOf']}: {result}")
+    return result
+
+
+def seconds_until_next_run(hour=7, minute=30):
+    now = datetime.now(SEOUL_TZ)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+def start_email_scheduler():
+    if os.environ.get("BRIEFING_EMAIL_ENABLED", "").lower() not in ("1", "true", "yes"):
+        print("[briefing-email] scheduler disabled; set BRIEFING_EMAIL_ENABLED=true to enable")
+        return
+
+    def run_loop():
+        while True:
+            wait_seconds = seconds_until_next_run()
+            print(f"[briefing-email] next run in {int(wait_seconds)} seconds")
+            time.sleep(wait_seconds)
+            try:
+                send_daily_briefing()
+            except Exception as error:
+                print(f"[briefing-email] failed: {error}")
+
+    thread = threading.Thread(target=run_loop, daemon=True)
+    thread.start()
+
+
 class InvestmentBriefingHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/healthz"):
@@ -317,6 +631,9 @@ class InvestmentBriefingHandler(SimpleHTTPRequestHandler):
             return
         if self.path.startswith("/api/analysis"):
             self.send_analysis()
+            return
+        if self.path.startswith("/api/email/test"):
+            self.send_test_email()
             return
         super().do_GET()
 
@@ -421,10 +738,31 @@ class InvestmentBriefingHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_test_email(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        admin_token = os.environ.get("BRIEFING_ADMIN_TOKEN")
+        if admin_token and params.get("token", [""])[0] != admin_token:
+            body = json.dumps({"error": "Unauthorized"}).encode("utf-8")
+            self.send_response(401)
+        else:
+            try:
+                result = send_daily_briefing()
+                body = json.dumps({"status": "sent", "result": result}).encode("utf-8")
+                self.send_response(200)
+            except Exception as error:
+                body = json.dumps({"error": str(error)}).encode("utf-8")
+                self.send_response(500)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
 
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "3000"))
+    start_email_scheduler()
     server = ThreadingHTTPServer((host, port), InvestmentBriefingHandler)
     print(f"Serving investment briefing at http://{host}:{port}")
     server.serve_forever()
