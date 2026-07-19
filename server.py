@@ -637,8 +637,8 @@ def build_html_email(report):
                   <th align="left">醫낅ぉ</th>
                   <th align="right">?꾩옱媛</th>
                   <th align="right">蹂??/th>
-                  <th align="left">?좎젙 洹쇨굅</th>
-                  <th align="right">?먯닔</th>
+                  <th align="left">선정 근거</th>
+                  <th align="right">점수</th>
                 </tr>
               </thead>
               <tbody>{''.join(rows)}</tbody>
@@ -650,37 +650,37 @@ def build_html_email(report):
     <!doctype html>
     <html lang="ko">
       <body style="font-family:Arial,'Malgun Gothic',sans-serif;color:#17202a;line-height:1.55">
-        <h1 style="color:#0f766e;margin-bottom:4px">?ㅻ뒛???ъ옄 釉뚮━??- Korea &amp; US Investment Briefing</h1>
-        <p style="margin-top:0;color:#64748b">?묒꽦 ?쒓컖: {report["asOf"]} (Asia/Seoul)</p>
+        <h1 style="color:#0f766e;margin-bottom:4px">오늘의 투자 브리핑 - Korea &amp; US Investment Briefing</h1>
+        <p style="margin-top:0;color:#64748b">작성 시각: {report["asOf"]} (Asia/Seoul)</p>
         <p><a href="{APP_BASE_URL}">{APP_BASE_URL}</a></p>
 
-        <h2 style="color:#0f766e">?쒖옣 吏??/h2>
+        <h2 style="color:#0f766e">시장 지표</h2>
         <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #dbe3ea">
           <thead>
             <tr style="background:#0f766e;color:#ffffff">
-              <th align="left">吏??/th>
-              <th align="right">?꾩옱媛</th>
-              <th align="right">?깅씫瑜?/th>
-              <th align="right">1??理쒓퀬</th>
-              <th align="right">1??理쒖?</th>
+              <th align="left">지표</th>
+              <th align="right">현재가</th>
+              <th align="right">등락률</th>
+              <th align="right">1년 최고</th>
+              <th align="right">1년 최저</th>
             </tr>
           </thead>
           <tbody>{''.join(index_rows)}</tbody>
         </table>
 
-        <h2 style="color:#0f766e;margin-top:22px">?ㅻ뒛??TOP Picks 諛??좎젙 寃곌낵</h2>
+        <h2 style="color:#0f766e;margin-top:22px">오늘의 TOP Picks 및 선정 결과</h2>
         {''.join(group_sections)}
 
-        <h2 style="color:#0f766e;margin-top:22px">?곸꽭 罹붾뱾李⑦듃</h2>
+        <h2 style="color:#0f766e;margin-top:22px">상세 캔들차트</h2>
         <p>
-          ?대찓??蹂몃Ц?먯꽌??蹂댁븞???곹샇?묒슜??罹붾뱾李⑦듃瑜?吏곸젒 ?ㅽ뻾?????놁뒿?덈떎.
-          ?곸꽭 罹붾뱾李⑦듃(?쇰큺 3媛쒖썡, 二쇰큺 1?? ?붾큺 3??? 嫄곕옒??洹몃옒?꾨뒗 ?꾨옒 ??쒕낫?쒖뿉??諛붾줈 ?뺤씤?섏꽭??
+          이메일 본문에서는 보안 및 호환성 문제로 캔들차트를 직접 실행하지 않습니다.
+          상세 캔들차트는 대시보드에서 바로 확인해 주세요.
         </p>
-        <p><a href="{APP_BASE_URL}" style="display:inline-block;background:#0f766e;color:#fff;padding:10px 14px;text-decoration:none;border-radius:6px">??쒕낫?쒖뿉??李⑦듃 蹂닿린</a></p>
+        <p><a href="{APP_BASE_URL}" style="display:inline-block;background:#0f766e;color:#fff;padding:10px 14px;text-decoration:none;border-radius:6px">대시보드에서 차트 보기</a></p>
 
         <p style="margin-top:24px;color:#64748b;font-size:12px">
-          蹂?硫붿씪? ?뺣낫 ?쒓났 紐⑹쟻?대ŉ ?ъ옄 沅뚯쑀???섏씡 蹂댁옣???섎??섏? ?딆뒿?덈떎.
-          ?ъ옄 寃곗젙怨?寃곌낵??梨낆엫? ?ъ옄??蹂몄씤?먭쾶 ?덉쑝硫? ?쒖옣 ?곗씠?곕뒗 吏?곕릺嫄곕굹 ?ㅻ쪟媛 諛쒖깮?????덉뒿?덈떎.
+          본 메일은 정보 제공 목적이며 투자 권유나 수익 보장을 의미하지 않습니다.
+          투자 결정과 그 결과에 대한 책임은 투자자 본인에게 있으며, 시장 데이터는 지연되거나 오류가 발생할 수 있습니다.
         </p>
       </body>
     </html>
@@ -725,7 +725,7 @@ def send_email_message(subject, html_body):
     message["Subject"] = subject
     message["From"] = sender
     message["To"] = ", ".join(recipients)
-    message.set_content("HTML 硫붿씪??吏?먰븯???대씪?댁뼵?몄뿉???ㅻ뒛???ъ옄 釉뚮━?묒쓣 ?뺤씤?섏꽭??")
+    message.set_content("HTML 메일을 지원하는 클라이언트에서 오늘의 투자 브리핑을 확인해 주세요.")
     message.add_alternative(html_body, subtype="html")
 
     host = os.environ.get("SMTP_HOST")
@@ -749,7 +749,7 @@ def send_email_message(subject, html_body):
 
 def send_daily_briefing():
     report = build_report_data()
-    subject = "?ㅻ뒛???ъ옄 釉뚮━??- Korea & US Investment Briefing"
+    subject = "오늘의 투자 브리핑 - Korea & US Investment Briefing"
     html_body = build_html_email(report)
     result = send_email_message(subject, html_body)
     print(f"[briefing-email] sent at {report['asOf']}: {result}")
