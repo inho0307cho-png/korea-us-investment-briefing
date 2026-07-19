@@ -332,12 +332,12 @@ def trend_consistency(closes):
 
 def analysis_grade(score):
     if score >= 75:
-        return "媛뺥븿"
+        return "강함"
     if score >= 60:
-        return "?묓샇"
+        return "양호"
     if score >= 45:
-        return "以묐┰"
-    return "?쏀븿"
+        return "중립"
+    return "약함"
 
 
 def format_number(value):
@@ -633,10 +633,10 @@ def build_html_email(report):
             <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #dbe3ea">
               <thead>
                 <tr style="background:#eef7f5;color:#0f766e">
-                  <th align="center">?쒖쐞</th>
-                  <th align="left">醫낅ぉ</th>
-                  <th align="right">?꾩옱媛</th>
-                  <th align="right">蹂??/th>
+                  <th align="center">순위</th>
+                  <th align="left">종목</th>
+                  <th align="right">현재가</th>
+                  <th align="right">변동</th>
                   <th align="left">선정 근거</th>
                   <th align="right">점수</th>
                 </tr>
