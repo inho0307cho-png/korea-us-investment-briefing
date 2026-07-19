@@ -23,6 +23,12 @@ const state = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const TOP_STOCK_COUNT = 5;
+const TOP_ETF_COUNT = 3;
+
+function topCountFor(assetType) {
+  return assetType === "stock" ? TOP_STOCK_COUNT : TOP_ETF_COUNT;
+}
 
 function formatPercent(value) {
   const sign = value > 0 ? "+" : "";
@@ -205,7 +211,7 @@ function getTabRecommendations() {
   if (!tabFilter.market || !tabFilter.asset) return getScoredRecommendations();
   return getScoredRecommendations()
     .filter((item) => item.market === tabFilter.market && item.assetType === tabFilter.asset)
-    .slice(0, 3);
+    .slice(0, topCountFor(tabFilter.asset));
 }
 
 function renderIndexMetric(config) {
@@ -263,8 +269,8 @@ function renderTopPicks() {
   }
   const scored = getScoredRecommendations();
   const groups = [
-    { label: "한국주식 TOP 3", market: "KR", assetType: "stock" },
-    { label: "미국주식 TOP 3", market: "US", assetType: "stock" },
+    { label: "한국주식 TOP 5", market: "KR", assetType: "stock" },
+    { label: "미국주식 TOP 5", market: "US", assetType: "stock" },
     { label: "한국 ETF TOP 3", market: "KR", assetType: "etf" },
     { label: "미국 ETF TOP 3", market: "US", assetType: "etf" },
   ];
@@ -276,6 +282,8 @@ function renderTopPicks() {
           <th>1위</th>
           <th>2위</th>
           <th>3위</th>
+          <th>4위</th>
+          <th>5위</th>
         </tr>
       </thead>
       <tbody>
@@ -283,7 +291,7 @@ function renderTopPicks() {
           .map((group) => {
             const picks = scored
               .filter((item) => item.market === group.market && item.assetType === group.assetType)
-              .slice(0, 3);
+              .slice(0, topCountFor(group.assetType));
             return `
               <tr>
                 <td>${group.label}</td>
@@ -296,6 +304,9 @@ function renderTopPicks() {
                       </td>
                     `
                   )
+                  .join("")}
+                ${Array.from({ length: topCountFor(group.assetType) === TOP_STOCK_COUNT ? 0 : TOP_STOCK_COUNT - TOP_ETF_COUNT })
+                  .map(() => `<td class="empty-pick">-</td>`)
                   .join("")}
               </tr>
             `;
@@ -335,8 +346,8 @@ function renderChartOptions() {
 
 function getResultGroups(items = getScoredRecommendations()) {
   return [
-    { title: "한국주식 TOP 3", items: items.filter((item) => item.market === "KR" && item.assetType === "stock").slice(0, 3) },
-    { title: "미국주식 TOP 3", items: items.filter((item) => item.market === "US" && item.assetType === "stock").slice(0, 3) },
+    { title: "한국주식 TOP 5", items: items.filter((item) => item.market === "KR" && item.assetType === "stock").slice(0, TOP_STOCK_COUNT) },
+    { title: "미국주식 TOP 5", items: items.filter((item) => item.market === "US" && item.assetType === "stock").slice(0, TOP_STOCK_COUNT) },
     { title: "한국 ETF TOP 3", items: items.filter((item) => item.market === "KR" && item.assetType === "etf").slice(0, 3) },
     { title: "미국 ETF TOP 3", items: items.filter((item) => item.market === "US" && item.assetType === "etf").slice(0, 3) },
   ];
@@ -395,6 +406,7 @@ function describeReason(item, reason) {
   const factors = item.factors || {};
   const descriptions = {
     "모멘텀": `최근 1개월 ${formatPercent(factors.return1m || 0)}, 3개월 ${formatPercent(factors.return3m || 0)} 흐름과 10/20/60일 추세를 종합하면 ${reason.grade}입니다.`,
+    "수익성": `1개월 ${formatPercent(factors.return1m || 0)}, 3개월 ${formatPercent(factors.return3m || 0)}, 6개월 ${formatPercent(factors.return6m || 0)} 수익률과 변동성 대비 수익률을 함께 보면 ${reason.grade}입니다.`,
     "성장/추세 품질": `3개월·6개월 가격 흐름, 20일/60일 평균선 방향, 상승일 비율을 함께 보면 추세 품질이 ${reason.grade}입니다.`,
     "밸류 부담": `52주 고점 대비 위치와 6개월 상승 부담을 기준으로 보면 현재 가격 부담은 ${reason.grade} 수준입니다.`,
     "품질/리스크": `연환산 변동성 ${factors.volatility ?? "-"}%, 최대낙폭 ${factors.maxDrawdown ?? "-"}%를 반영한 안정성 평가는 ${reason.grade}입니다.`,
@@ -475,7 +487,7 @@ function renderRecommendationRows(items) {
         </tr>
         <tr class="reason-row">
           <td colspan="5">
-            <strong>TOP3 선정 근거</strong>
+            <strong>TOP Picks 선정 근거</strong>
             <span>${renderActualReasonSummary(item)}</span>
           </td>
         </tr>
@@ -536,6 +548,10 @@ function getTabLabel() {
   return labels[state.tab] || "";
 }
 
+function picksAssetType() {
+  return tabToFilter(state.tab).asset || "stock";
+}
+
 function equalizeResultGroupHeights() {
   const groups = Array.from(document.querySelectorAll(".result-group"));
   groups.forEach((group) => {
@@ -570,10 +586,10 @@ async function renderTabPickCharts(items) {
   }
 
   const renderId = (state.tabChartRenderId += 1);
-  const picks = items.slice(0, 3);
+  const picks = items.slice(0, topCountFor(picksAssetType()));
   const label = getTabLabel();
   section.classList.remove("is-hidden");
-  $("#tabChartTitle").textContent = `${label} TOP 3 주봉 캔들차트`;
+  $("#tabChartTitle").textContent = `${label} TOP ${picks.length} 주봉 캔들차트`;
   list.innerHTML = picks
     .map(
       (item, index) => `

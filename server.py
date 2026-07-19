@@ -13,6 +13,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://web-production-ca090.up.railway.app/")
 SEOUL_TZ = timezone(timedelta(hours=9))
+YAHOO_CACHE = {}
+YAHOO_CACHE_TTL_SECONDS = int(os.environ.get("YAHOO_CACHE_TTL_SECONDS", "300"))
 
 SYMBOLS = {
     "SPX": "^GSPC",
@@ -28,9 +30,23 @@ QUOTE_SYMBOLS = {
     "005930": "005930.KS",
     "000660": "000660.KS",
     "035420": "035420.KS",
+    "005380": "005380.KS",
+    "000270": "000270.KS",
+    "207940": "207940.KS",
+    "068270": "068270.KS",
+    "012450": "012450.KS",
+    "267260": "267260.KS",
     "NVDA": "NVDA",
     "MSFT": "MSFT",
     "AAPL": "AAPL",
+    "GOOGL": "GOOGL",
+    "AMZN": "AMZN",
+    "META": "META",
+    "AVGO": "AVGO",
+    "AMD": "AMD",
+    "TSLA": "TSLA",
+    "LLY": "LLY",
+    "JPM": "JPM",
     "TIGERKR10": "133690.KS",
     "TIGER200": "102110.KS",
     "KODEX200": "069500.KS",
@@ -43,9 +59,23 @@ INSTRUMENTS = {
     "005930": {"name": "Samsung Electronics", "market": "KR", "assetType": "stock"},
     "000660": {"name": "SK hynix", "market": "KR", "assetType": "stock"},
     "035420": {"name": "NAVER", "market": "KR", "assetType": "stock"},
+    "005380": {"name": "Hyundai Motor", "market": "KR", "assetType": "stock"},
+    "000270": {"name": "Kia", "market": "KR", "assetType": "stock"},
+    "207940": {"name": "Samsung Biologics", "market": "KR", "assetType": "stock"},
+    "068270": {"name": "Celltrion", "market": "KR", "assetType": "stock"},
+    "012450": {"name": "Hanwha Aerospace", "market": "KR", "assetType": "stock"},
+    "267260": {"name": "HD Hyundai Electric", "market": "KR", "assetType": "stock"},
     "NVDA": {"name": "NVIDIA", "market": "US", "assetType": "stock"},
     "MSFT": {"name": "Microsoft", "market": "US", "assetType": "stock"},
     "AAPL": {"name": "Apple", "market": "US", "assetType": "stock"},
+    "GOOGL": {"name": "Alphabet", "market": "US", "assetType": "stock"},
+    "AMZN": {"name": "Amazon", "market": "US", "assetType": "stock"},
+    "META": {"name": "Meta Platforms", "market": "US", "assetType": "stock"},
+    "AVGO": {"name": "Broadcom", "market": "US", "assetType": "stock"},
+    "AMD": {"name": "AMD", "market": "US", "assetType": "stock"},
+    "TSLA": {"name": "Tesla", "market": "US", "assetType": "stock"},
+    "LLY": {"name": "Eli Lilly", "market": "US", "assetType": "stock"},
+    "JPM": {"name": "JPMorgan Chase", "market": "US", "assetType": "stock"},
     "TIGERKR10": {"name": "TIGER US Nasdaq 100", "market": "KR", "assetType": "etf"},
     "TIGER200": {"name": "TIGER 200", "market": "KR", "assetType": "etf"},
     "KODEX200": {"name": "KODEX 200", "market": "KR", "assetType": "etf"},
@@ -55,10 +85,10 @@ INSTRUMENTS = {
 }
 
 GROUPS = [
-    ("kr_stock", "한국 주식 TOP 3", "KR", "stock"),
-    ("us_stock", "미국 주식 TOP 3", "US", "stock"),
-    ("kr_etf", "한국 ETF TOP 3", "KR", "etf"),
-    ("us_etf", "미국 ETF TOP 3", "US", "etf"),
+    ("kr_stock", "한국 주식 TOP 5", "KR", "stock", 5),
+    ("us_stock", "미국 주식 TOP 5", "US", "stock", 5),
+    ("kr_etf", "한국 ETF TOP 3", "KR", "etf", 3),
+    ("us_etf", "미국 ETF TOP 3", "US", "etf", 3),
 ]
 
 CHART_SYMBOLS.update(QUOTE_SYMBOLS)
@@ -71,6 +101,12 @@ PERIOD_CONFIG = {
 
 
 def fetch_yahoo_chart(symbol, range_value="1y", interval="1wk"):
+    cache_key = (symbol, range_value, interval)
+    cached = YAHOO_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached["time"] < YAHOO_CACHE_TTL_SECONDS:
+        return cached["data"]
+
     encoded_symbol = urllib.parse.quote(symbol, safe="")
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded_symbol}?range={range_value}&interval={interval}"
     request = urllib.request.Request(
@@ -114,11 +150,13 @@ def fetch_yahoo_chart(symbol, range_value="1y", interval="1wk"):
             }
         )
 
-    return {
+    result_data = {
         "value": current,
         "change": change_percent,
-        "candles": candles[-53:],
+        "candles": candles,
     }
+    YAHOO_CACHE[cache_key] = {"time": now, "data": result_data}
+    return result_data
 
 
 def fetch_index(symbol):
@@ -244,6 +282,8 @@ def reason_sentence(item):
     parts = []
     if factors.get("momentum") is not None:
         parts.append(f"모멘텀 {factors['momentum']}점")
+    if factors.get("profitability") is not None:
+        parts.append(f"수익성 {factors['profitability']}점")
     if factors.get("trendGrowth") is not None:
         parts.append(f"추세 품질 {factors['trendGrowth']}점")
     if factors.get("liquidity") is not None:
@@ -283,6 +323,9 @@ def analyze_ticker(ticker):
     drawdown = max_drawdown(closes)
     volume_ratio = average(volumes[-20:]) / average(volumes[-120:]) if len(volumes) >= 120 and average(volumes[-120:]) else 1
     high_position = ((current - low_52w) / (high_52w - low_52w)) * 100 if high_52w != low_52w else 50
+    avg_daily_return = average(day_returns)
+    positive_day_ratio = sum(1 for value in day_returns[-60:] if value > 0) / max(1, len(day_returns[-60:])) * 100
+    risk_adjusted_return = return_3m / volatility if volatility else 0
 
     momentum_score = average(
         [
@@ -291,6 +334,16 @@ def analyze_ticker(ticker):
             scale(return_6m, -25, 40),
             scale((current / ma20 - 1) * 100, -8, 8),
             scale((ma20 / ma60 - 1) * 100, -8, 8),
+        ]
+    )
+    profitability_score = average(
+        [
+            scale(return_1m, -6, 14),
+            scale(return_3m, -10, 30),
+            scale(return_6m, -15, 45),
+            scale(avg_daily_return, -0.25, 0.35),
+            scale(risk_adjusted_return, -0.25, 0.75),
+            positive_day_ratio,
         ]
     )
     trend_quality_score = average(
@@ -316,13 +369,13 @@ def analyze_ticker(ticker):
     fund_flow_proxy_score = average([scale(volume_ratio, 0.7, 1.8), scale(return_1m, -8, 12)])
 
     stock_score = (
-        momentum_score * 0.20
+        profitability_score * 0.30
+        + momentum_score * 0.18
         + trend_quality_score * 0.20
-        + valuation_proxy_score * 0.15
-        + quality_risk_score * 0.20
+        + valuation_proxy_score * 0.07
+        + quality_risk_score * 0.12
         + liquidity_score * 0.10
-        + sentiment_score * 0.10
-        + risk_penalty_score * 0.05
+        + risk_penalty_score * 0.03
     )
     etf_score = (
         momentum_score * 0.25
@@ -338,6 +391,7 @@ def analyze_ticker(ticker):
         "etfScore": round(etf_score),
         "factors": {
             "momentum": round(momentum_score),
+            "profitability": round(profitability_score),
             "trendGrowth": round(trend_quality_score),
             "valuationProxy": round(valuation_proxy_score),
             "qualityRisk": round(quality_risk_score),
@@ -355,9 +409,12 @@ def analyze_ticker(ticker):
             "volatility": round(volatility, 2),
             "maxDrawdown": round(drawdown, 2),
             "volumeRatio": round(volume_ratio, 2),
+            "positiveDayRatio": round(positive_day_ratio, 2),
+            "riskAdjustedReturn": round(risk_adjusted_return, 2),
         },
         "reasonScores": {
             "stock": [
+                {"label": "수익성", "score": round(profitability_score), "grade": analysis_grade(profitability_score)},
                 {"label": "모멘텀", "score": round(momentum_score), "grade": analysis_grade(momentum_score)},
                 {"label": "성장/추세 품질", "score": round(trend_quality_score), "grade": analysis_grade(trend_quality_score)},
                 {"label": "밸류 부담", "score": round(valuation_proxy_score), "grade": analysis_grade(valuation_proxy_score)},
@@ -402,7 +459,7 @@ def build_report_data():
             quote_errors[ticker] = str(error)
 
     ranked_groups = {}
-    for key, label, market, asset_type in GROUPS:
+    for key, label, market, asset_type, limit in GROUPS:
         ranked_groups[key] = {
             "label": label,
             "items": sorted(
@@ -413,7 +470,7 @@ def build_report_data():
                     -item["analysis"]["factors"].get("maxDrawdown", 0),
                 ),
                 reverse=True,
-            )[:3],
+            )[:limit],
         }
 
     return {
@@ -500,7 +557,7 @@ def build_html_email(report):
           <tbody>{''.join(index_rows)}</tbody>
         </table>
 
-        <h2 style="color:#0f766e;margin-top:22px">오늘의 TOP3 및 선정 결과</h2>
+        <h2 style="color:#0f766e;margin-top:22px">오늘의 TOP Picks 및 선정 결과</h2>
         {''.join(group_sections)}
 
         <h2 style="color:#0f766e;margin-top:22px">상세 캔들차트</h2>
