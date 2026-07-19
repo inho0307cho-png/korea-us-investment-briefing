@@ -15,6 +15,7 @@ const state = {
   indexCandles: {},
   liveQuotes: {},
   liveAnalysis: {},
+  liveInstruments: {},
   analysisLoaded: false,
   detailChartCache: {},
   tabChartRenderId: 0,
@@ -24,7 +25,7 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const TOP_STOCK_COUNT = 5;
-const TOP_ETF_COUNT = 3;
+const TOP_ETF_COUNT = 5;
 
 function topCountFor(assetType) {
   return assetType === "stock" ? TOP_STOCK_COUNT : TOP_ETF_COUNT;
@@ -100,6 +101,7 @@ async function loadLiveQuotes() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     state.liveQuotes = payload.quotes || {};
+    state.liveInstruments = { ...state.liveInstruments, ...(payload.instruments || {}) };
   } catch (error) {
     state.liveQuotes = {};
   }
@@ -111,11 +113,44 @@ async function loadLiveAnalysis() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     state.liveAnalysis = payload.analysis || {};
+    state.liveInstruments = { ...state.liveInstruments, ...(payload.instruments || {}) };
     state.analysisLoaded = true;
   } catch (error) {
     state.liveAnalysis = {};
     state.analysisLoaded = false;
   }
+}
+
+function createLiveRecommendation(ticker, meta = {}) {
+  const fallback = recommendations.find((item) => item.ticker === ticker) || {};
+  const market = meta.market || fallback.market || "US";
+  const assetType = meta.assetType || fallback.assetType || "stock";
+  const quote = state.liveQuotes[ticker] || {};
+  const isKR = market === "KR";
+  return {
+    ticker,
+    name: meta.name || fallback.name || ticker,
+    exchange: fallback.exchange || (isKR ? "KRX" : assetType === "etf" ? "NYSE Arca" : "NASDAQ"),
+    market,
+    assetType,
+    sector: fallback.sector || (assetType === "etf" ? "ETF" : "주식"),
+    price: fallback.price || (typeof quote.price === "number" ? `${isKR ? "" : "$"}${formatNumber(quote.price, isKR ? "ko-KR" : "en-US")}${isKR ? "원" : ""}` : "-"),
+    dayChange: fallback.dayChange ?? 0,
+    weekReturn: fallback.weekReturn ?? 0,
+    monthReturn: fallback.monthReturn ?? 0,
+    horizon: fallback.horizon || "중기",
+    metrics: fallback.metrics || {},
+    reasons: fallback.reasons || ["실제 OHLCV 캔들차트, 수익성, 추세 품질, 거래량을 종합해 산정한 후보입니다."],
+    risks: fallback.risks || ["시장 변동성과 데이터 제공 지연 가능성을 함께 확인해야 합니다."],
+  };
+}
+
+function getRecommendationUniverse() {
+  const merged = new Map(recommendations.map((item) => [item.ticker, item]));
+  Object.entries(state.liveInstruments).forEach(([ticker, meta]) => {
+    merged.set(ticker, { ...createLiveRecommendation(ticker, meta), ...(merged.get(ticker) || {}) });
+  });
+  return [...merged.values()];
 }
 
 function getActualScore(item) {
@@ -171,7 +206,7 @@ function tabToFilter(tab) {
 }
 
 function getScoredRecommendations() {
-  return recommendations
+  return getRecommendationUniverse()
     .map((item) => ({
       ...item,
       score: getActualScore(item),
@@ -271,8 +306,8 @@ function renderTopPicks() {
   const groups = [
     { label: "한국주식 TOP 5", market: "KR", assetType: "stock" },
     { label: "미국주식 TOP 5", market: "US", assetType: "stock" },
-    { label: "한국 ETF TOP 3", market: "KR", assetType: "etf" },
-    { label: "미국 ETF TOP 3", market: "US", assetType: "etf" },
+    { label: "한국 ETF TOP 5", market: "KR", assetType: "etf" },
+    { label: "미국 ETF TOP 5", market: "US", assetType: "etf" },
   ];
   $("#briefingTopPicks").innerHTML = `
     <table>
@@ -304,9 +339,6 @@ function renderTopPicks() {
                       </td>
                     `
                   )
-                  .join("")}
-                ${Array.from({ length: topCountFor(group.assetType) === TOP_STOCK_COUNT ? 0 : TOP_STOCK_COUNT - TOP_ETF_COUNT })
-                  .map(() => `<td class="empty-pick">-</td>`)
                   .join("")}
               </tr>
             `;
@@ -348,8 +380,8 @@ function getResultGroups(items = getScoredRecommendations()) {
   return [
     { title: "한국주식 TOP 5", items: items.filter((item) => item.market === "KR" && item.assetType === "stock").slice(0, TOP_STOCK_COUNT) },
     { title: "미국주식 TOP 5", items: items.filter((item) => item.market === "US" && item.assetType === "stock").slice(0, TOP_STOCK_COUNT) },
-    { title: "한국 ETF TOP 3", items: items.filter((item) => item.market === "KR" && item.assetType === "etf").slice(0, 3) },
-    { title: "미국 ETF TOP 3", items: items.filter((item) => item.market === "US" && item.assetType === "etf").slice(0, 3) },
+    { title: "한국 ETF TOP 5", items: items.filter((item) => item.market === "KR" && item.assetType === "etf").slice(0, TOP_ETF_COUNT) },
+    { title: "미국 ETF TOP 5", items: items.filter((item) => item.market === "US" && item.assetType === "etf").slice(0, TOP_ETF_COUNT) },
   ];
 }
 

@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import math
 import smtplib
@@ -6,6 +6,7 @@ import time
 import urllib.parse
 import urllib.request
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,7 @@ APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://web-production-ca090.up.r
 SEOUL_TZ = timezone(timedelta(hours=9))
 YAHOO_CACHE = {}
 YAHOO_CACHE_TTL_SECONDS = int(os.environ.get("YAHOO_CACHE_TTL_SECONDS", "300"))
+MARKET_DATA_WORKERS = int(os.environ.get("MARKET_DATA_WORKERS", "12"))
 
 SYMBOLS = {
     "SPX": "^GSPC",
@@ -26,71 +28,163 @@ CHART_SYMBOLS = {
     **SYMBOLS,
 }
 
+KR_STOCK_POOL = [
+    ("005930", "005930.KS", "Samsung Electronics"),
+    ("000660", "000660.KS", "SK hynix"),
+    ("373220", "373220.KS", "LG Energy Solution"),
+    ("207940", "207940.KS", "Samsung Biologics"),
+    ("005380", "005380.KS", "Hyundai Motor"),
+    ("000270", "000270.KS", "Kia"),
+    ("068270", "068270.KS", "Celltrion"),
+    ("105560", "105560.KS", "KB Financial Group"),
+    ("055550", "055550.KS", "Shinhan Financial Group"),
+    ("035420", "035420.KS", "NAVER"),
+    ("012450", "012450.KS", "Hanwha Aerospace"),
+    ("329180", "329180.KS", "HD Hyundai Heavy Industries"),
+    ("005490", "005490.KS", "POSCO Holdings"),
+    ("066570", "066570.KS", "LG Electronics"),
+    ("051910", "051910.KS", "LG Chem"),
+    ("006400", "006400.KS", "Samsung SDI"),
+    ("028260", "028260.KS", "Samsung C&T"),
+    ("032830", "032830.KS", "Samsung Life Insurance"),
+    ("086790", "086790.KS", "Hana Financial Group"),
+    ("138040", "138040.KS", "Meritz Financial Group"),
+    ("015760", "015760.KS", "Korea Electric Power"),
+    ("034020", "034020.KS", "Doosan Enerbility"),
+    ("009540", "009540.KS", "HD Korea Shipbuilding & Offshore Engineering"),
+    ("011200", "011200.KS", "HMM"),
+    ("042660", "042660.KS", "Hanwha Ocean"),
+    ("267260", "267260.KS", "HD Hyundai Electric"),
+    ("010130", "010130.KS", "Korea Zinc"),
+    ("259960", "259960.KS", "Krafton"),
+    ("035720", "035720.KS", "Kakao"),
+    ("003550", "003550.KS", "LG"),
+]
+
+US_STOCK_POOL = [
+    ("NVDA", "NVDA", "NVIDIA"),
+    ("MSFT", "MSFT", "Microsoft"),
+    ("AAPL", "AAPL", "Apple"),
+    ("GOOGL", "GOOGL", "Alphabet"),
+    ("AMZN", "AMZN", "Amazon"),
+    ("META", "META", "Meta Platforms"),
+    ("AVGO", "AVGO", "Broadcom"),
+    ("TSLA", "TSLA", "Tesla"),
+    ("BRK-B", "BRK-B", "Berkshire Hathaway"),
+    ("LLY", "LLY", "Eli Lilly"),
+    ("JPM", "JPM", "JPMorgan Chase"),
+    ("V", "V", "Visa"),
+    ("MA", "MA", "Mastercard"),
+    ("UNH", "UNH", "UnitedHealth Group"),
+    ("XOM", "XOM", "Exxon Mobil"),
+    ("COST", "COST", "Costco"),
+    ("WMT", "WMT", "Walmart"),
+    ("HD", "HD", "Home Depot"),
+    ("PG", "PG", "Procter & Gamble"),
+    ("JNJ", "JNJ", "Johnson & Johnson"),
+    ("ORCL", "ORCL", "Oracle"),
+    ("NFLX", "NFLX", "Netflix"),
+    ("BAC", "BAC", "Bank of America"),
+    ("KO", "KO", "Coca-Cola"),
+    ("PLTR", "PLTR", "Palantir"),
+    ("AMD", "AMD", "AMD"),
+    ("CRM", "CRM", "Salesforce"),
+    ("ADBE", "ADBE", "Adobe"),
+    ("CSCO", "CSCO", "Cisco"),
+    ("MCD", "MCD", "McDonald's"),
+]
+
+KR_ETF_POOL = [
+    ("KODEX200", "069500.KS", "KODEX 200"),
+    ("TIGER200", "102110.KS", "TIGER 200"),
+    ("KBSTAR200", "148020.KS", "KBSTAR 200"),
+    ("ARIRANG200", "152100.KS", "ARIRANG 200"),
+    ("KODEXKOSDAQ150", "229200.KS", "KODEX KOSDAQ150"),
+    ("TIGERKOSDAQ150", "232080.KS", "TIGER KOSDAQ150"),
+    ("KODEXLEVERAGE", "122630.KS", "KODEX Leverage"),
+    ("KODEXINVERSE", "114800.KS", "KODEX Inverse"),
+    ("KODEX200TR", "278530.KS", "KODEX 200TR"),
+    ("TIGERTOP10", "292150.KS", "TIGER TOP10"),
+    ("TIGERKR10", "133690.KS", "TIGER US Nasdaq 100"),
+    ("KODEXUSSP500", "379800.KS", "KODEX US S&P500TR"),
+    ("TIGERUSSP500", "360750.KS", "TIGER US S&P500"),
+    ("ACEUSSP500", "360200.KS", "ACE US S&P500"),
+    ("KODEXUSNASDAQ100", "379810.KS", "KODEX US Nasdaq 100TR"),
+    ("TIGERUSNASDAQ100", "133690.KS", "TIGER US Nasdaq 100"),
+    ("ACEUSNASDAQ100", "367380.KS", "ACE US Nasdaq 100"),
+    ("TIGERUSPHLXSOLACTIVE", "381180.KS", "TIGER US PHLX Semiconductor Nasdaq"),
+    ("KODEXUSSEMICONDUCTOR", "390390.KS", "KODEX US Semiconductor MV"),
+    ("KODEX2NDARYBATTERY", "305720.KS", "KODEX Secondary Battery Industry"),
+    ("TIGER2NDARYBATTERY", "305540.KS", "TIGER Secondary Battery Theme"),
+    ("KODEXBANK", "091170.KS", "KODEX Banks"),
+    ("KODEXAUTOS", "091180.KS", "KODEX Autos"),
+    ("KODEXSEMICON", "091160.KS", "KODEX Semiconductors"),
+    ("TIGERSEMICON", "091230.KS", "TIGER Semiconductors"),
+    ("TIGERDIVIDEND", "161510.KS", "TIGER Dividend Growth"),
+    ("KODEXDIVIDEND", "279530.KS", "KODEX Dividend Growth"),
+    ("TIGERREIT", "329200.KS", "TIGER Real Estate Infra"),
+    ("KODEXGOLD", "132030.KS", "KODEX Gold Futures"),
+    ("KODEXDOLLAR", "261240.KS", "KODEX USD Futures"),
+]
+
+US_ETF_POOL = [
+    ("SPY", "SPY", "SPDR S&P 500 ETF"),
+    ("IVV", "IVV", "iShares Core S&P 500 ETF"),
+    ("VOO", "VOO", "Vanguard S&P 500 ETF"),
+    ("VTI", "VTI", "Vanguard Total Stock Market ETF"),
+    ("QQQ", "QQQ", "Invesco QQQ Trust"),
+    ("QQQM", "QQQM", "Invesco NASDAQ 100 ETF"),
+    ("IWM", "IWM", "iShares Russell 2000 ETF"),
+    ("DIA", "DIA", "SPDR Dow Jones Industrial Average ETF"),
+    ("SCHD", "SCHD", "Schwab US Dividend Equity ETF"),
+    ("VIG", "VIG", "Vanguard Dividend Appreciation ETF"),
+    ("VYM", "VYM", "Vanguard High Dividend Yield ETF"),
+    ("XLK", "XLK", "Technology Select Sector SPDR Fund"),
+    ("SMH", "SMH", "VanEck Semiconductor ETF"),
+    ("SOXX", "SOXX", "iShares Semiconductor ETF"),
+    ("XLF", "XLF", "Financial Select Sector SPDR Fund"),
+    ("XLE", "XLE", "Energy Select Sector SPDR Fund"),
+    ("XLV", "XLV", "Health Care Select Sector SPDR Fund"),
+    ("XLY", "XLY", "Consumer Discretionary Select Sector SPDR Fund"),
+    ("XLP", "XLP", "Consumer Staples Select Sector SPDR Fund"),
+    ("XLI", "XLI", "Industrial Select Sector SPDR Fund"),
+    ("ARKK", "ARKK", "ARK Innovation ETF"),
+    ("IBIT", "IBIT", "iShares Bitcoin Trust ETF"),
+    ("GLD", "GLD", "SPDR Gold Shares"),
+    ("TLT", "TLT", "iShares 20+ Year Treasury Bond ETF"),
+    ("IEF", "IEF", "iShares 7-10 Year Treasury Bond ETF"),
+    ("HYG", "HYG", "iShares iBoxx High Yield Corporate Bond ETF"),
+    ("LQD", "LQD", "iShares iBoxx Investment Grade Corporate Bond ETF"),
+    ("EFA", "EFA", "iShares MSCI EAFE ETF"),
+    ("EEM", "EEM", "iShares MSCI Emerging Markets ETF"),
+    ("VEA", "VEA", "Vanguard FTSE Developed Markets ETF"),
+]
+
+POOLS = [
+    ("KR", "stock", KR_STOCK_POOL),
+    ("US", "stock", US_STOCK_POOL),
+    ("KR", "etf", KR_ETF_POOL),
+    ("US", "etf", US_ETF_POOL),
+]
+
 QUOTE_SYMBOLS = {
-    "005930": "005930.KS",
-    "000660": "000660.KS",
-    "035420": "035420.KS",
-    "005380": "005380.KS",
-    "000270": "000270.KS",
-    "207940": "207940.KS",
-    "068270": "068270.KS",
-    "012450": "012450.KS",
-    "267260": "267260.KS",
-    "NVDA": "NVDA",
-    "MSFT": "MSFT",
-    "AAPL": "AAPL",
-    "GOOGL": "GOOGL",
-    "AMZN": "AMZN",
-    "META": "META",
-    "AVGO": "AVGO",
-    "AMD": "AMD",
-    "TSLA": "TSLA",
-    "LLY": "LLY",
-    "JPM": "JPM",
-    "TIGERKR10": "133690.KS",
-    "TIGER200": "102110.KS",
-    "KODEX200": "069500.KS",
-    "SPY": "SPY",
-    "QQQ": "QQQ",
-    "IWM": "IWM",
+    ticker: yahoo_symbol
+    for _, _, pool in POOLS
+    for ticker, yahoo_symbol, _ in pool
 }
 
 INSTRUMENTS = {
-    "005930": {"name": "Samsung Electronics", "market": "KR", "assetType": "stock"},
-    "000660": {"name": "SK hynix", "market": "KR", "assetType": "stock"},
-    "035420": {"name": "NAVER", "market": "KR", "assetType": "stock"},
-    "005380": {"name": "Hyundai Motor", "market": "KR", "assetType": "stock"},
-    "000270": {"name": "Kia", "market": "KR", "assetType": "stock"},
-    "207940": {"name": "Samsung Biologics", "market": "KR", "assetType": "stock"},
-    "068270": {"name": "Celltrion", "market": "KR", "assetType": "stock"},
-    "012450": {"name": "Hanwha Aerospace", "market": "KR", "assetType": "stock"},
-    "267260": {"name": "HD Hyundai Electric", "market": "KR", "assetType": "stock"},
-    "NVDA": {"name": "NVIDIA", "market": "US", "assetType": "stock"},
-    "MSFT": {"name": "Microsoft", "market": "US", "assetType": "stock"},
-    "AAPL": {"name": "Apple", "market": "US", "assetType": "stock"},
-    "GOOGL": {"name": "Alphabet", "market": "US", "assetType": "stock"},
-    "AMZN": {"name": "Amazon", "market": "US", "assetType": "stock"},
-    "META": {"name": "Meta Platforms", "market": "US", "assetType": "stock"},
-    "AVGO": {"name": "Broadcom", "market": "US", "assetType": "stock"},
-    "AMD": {"name": "AMD", "market": "US", "assetType": "stock"},
-    "TSLA": {"name": "Tesla", "market": "US", "assetType": "stock"},
-    "LLY": {"name": "Eli Lilly", "market": "US", "assetType": "stock"},
-    "JPM": {"name": "JPMorgan Chase", "market": "US", "assetType": "stock"},
-    "TIGERKR10": {"name": "TIGER US Nasdaq 100", "market": "KR", "assetType": "etf"},
-    "TIGER200": {"name": "TIGER 200", "market": "KR", "assetType": "etf"},
-    "KODEX200": {"name": "KODEX 200", "market": "KR", "assetType": "etf"},
-    "SPY": {"name": "SPDR S&P 500 ETF", "market": "US", "assetType": "etf"},
-    "QQQ": {"name": "Invesco QQQ Trust", "market": "US", "assetType": "etf"},
-    "IWM": {"name": "iShares Russell 2000 ETF", "market": "US", "assetType": "etf"},
+    ticker: {"name": name, "market": market, "assetType": asset_type}
+    for market, asset_type, pool in POOLS
+    for ticker, _, name in pool
 }
 
 GROUPS = [
     ("kr_stock", "한국 주식 TOP 5", "KR", "stock", 5),
     ("us_stock", "미국 주식 TOP 5", "US", "stock", 5),
-    ("kr_etf", "한국 ETF TOP 3", "KR", "etf", 3),
-    ("us_etf", "미국 ETF TOP 3", "US", "etf", 3),
+    ("kr_etf", "한국 ETF TOP 5", "KR", "etf", 5),
+    ("us_etf", "미국 ETF TOP 5", "US", "etf", 5),
 ]
-
 CHART_SYMBOLS.update(QUOTE_SYMBOLS)
 
 PERIOD_CONFIG = {
@@ -238,12 +332,12 @@ def trend_consistency(closes):
 
 def analysis_grade(score):
     if score >= 75:
-        return "강함"
+        return "媛뺥븿"
     if score >= 60:
-        return "양호"
+        return "?묓샇"
     if score >= 45:
-        return "중립"
-    return "약함"
+        return "以묐┰"
+    return "?쏀븿"
 
 
 def format_number(value):
@@ -434,34 +528,51 @@ def analyze_ticker(ticker):
     }
 
 
+def load_instrument_item(ticker, meta):
+    quote = fetch_quote(QUOTE_SYMBOLS[ticker])
+    analysis = analyze_ticker(ticker)
+    score = analysis["etfScore"] if meta["assetType"] == "etf" else analysis["stockScore"]
+    return {
+        "ticker": ticker,
+        "name": meta["name"],
+        "market": meta["market"],
+        "assetType": meta["assetType"],
+        "quote": quote,
+        "analysis": analysis,
+        "score": score,
+        "reason": reason_sentence({"analysis": analysis}),
+    }
+
+
+def collect_parallel(values, worker):
+    results = {}
+    errors = {}
+    with ThreadPoolExecutor(max_workers=MARKET_DATA_WORKERS) as executor:
+        future_map = {executor.submit(worker, key, value): key for key, value in values.items()}
+        for future in as_completed(future_map):
+            key = future_map[future]
+            try:
+                results[key] = future.result()
+            except Exception as error:
+                errors[key] = str(error)
+    return results, errors
+
+
+def pool_size_for(market, asset_type):
+    return sum(1 for meta in INSTRUMENTS.values() if meta["market"] == market and meta["assetType"] == asset_type)
+
+
 def build_report_data():
     indices = {key: fetch_index(symbol) for key, symbol in SYMBOLS.items()}
-    quote_errors = {}
-    items = []
-    for ticker, meta in INSTRUMENTS.items():
-        try:
-            quote = fetch_quote(QUOTE_SYMBOLS[ticker])
-            analysis = analyze_ticker(ticker)
-            score = analysis["etfScore"] if meta["assetType"] == "etf" else analysis["stockScore"]
-            items.append(
-                {
-                    "ticker": ticker,
-                    "name": meta["name"],
-                    "market": meta["market"],
-                    "assetType": meta["assetType"],
-                    "quote": quote,
-                    "analysis": analysis,
-                    "score": score,
-                    "reason": reason_sentence({"analysis": analysis}),
-                }
-            )
-        except Exception as error:
-            quote_errors[ticker] = str(error)
+    item_map, quote_errors = collect_parallel(INSTRUMENTS, load_instrument_item)
+    items = list(item_map.values())
 
     ranked_groups = {}
     for key, label, market, asset_type, limit in GROUPS:
         ranked_groups[key] = {
             "label": label,
+            "poolSize": pool_size_for(market, asset_type),
+            "limit": limit,
             "items": sorted(
                 [item for item in items if item["market"] == market and item["assetType"] == asset_type],
                 key=lambda item: (
@@ -522,12 +633,12 @@ def build_html_email(report):
             <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #dbe3ea">
               <thead>
                 <tr style="background:#eef7f5;color:#0f766e">
-                  <th align="center">순위</th>
-                  <th align="left">종목</th>
-                  <th align="right">현재가</th>
-                  <th align="right">변동</th>
-                  <th align="left">선정 근거</th>
-                  <th align="right">점수</th>
+                  <th align="center">?쒖쐞</th>
+                  <th align="left">醫낅ぉ</th>
+                  <th align="right">?꾩옱媛</th>
+                  <th align="right">蹂??/th>
+                  <th align="left">?좎젙 洹쇨굅</th>
+                  <th align="right">?먯닔</th>
                 </tr>
               </thead>
               <tbody>{''.join(rows)}</tbody>
@@ -539,37 +650,37 @@ def build_html_email(report):
     <!doctype html>
     <html lang="ko">
       <body style="font-family:Arial,'Malgun Gothic',sans-serif;color:#17202a;line-height:1.55">
-        <h1 style="color:#0f766e;margin-bottom:4px">오늘의 투자 브리핑 - Korea &amp; US Investment Briefing</h1>
-        <p style="margin-top:0;color:#64748b">작성 시각: {report["asOf"]} (Asia/Seoul)</p>
+        <h1 style="color:#0f766e;margin-bottom:4px">?ㅻ뒛???ъ옄 釉뚮━??- Korea &amp; US Investment Briefing</h1>
+        <p style="margin-top:0;color:#64748b">?묒꽦 ?쒓컖: {report["asOf"]} (Asia/Seoul)</p>
         <p><a href="{APP_BASE_URL}">{APP_BASE_URL}</a></p>
 
-        <h2 style="color:#0f766e">시장 지표</h2>
+        <h2 style="color:#0f766e">?쒖옣 吏??/h2>
         <table width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #dbe3ea">
           <thead>
             <tr style="background:#0f766e;color:#ffffff">
-              <th align="left">지표</th>
-              <th align="right">현재가</th>
-              <th align="right">등락률</th>
-              <th align="right">1년 최고</th>
-              <th align="right">1년 최저</th>
+              <th align="left">吏??/th>
+              <th align="right">?꾩옱媛</th>
+              <th align="right">?깅씫瑜?/th>
+              <th align="right">1??理쒓퀬</th>
+              <th align="right">1??理쒖?</th>
             </tr>
           </thead>
           <tbody>{''.join(index_rows)}</tbody>
         </table>
 
-        <h2 style="color:#0f766e;margin-top:22px">오늘의 TOP Picks 및 선정 결과</h2>
+        <h2 style="color:#0f766e;margin-top:22px">?ㅻ뒛??TOP Picks 諛??좎젙 寃곌낵</h2>
         {''.join(group_sections)}
 
-        <h2 style="color:#0f766e;margin-top:22px">상세 캔들차트</h2>
+        <h2 style="color:#0f766e;margin-top:22px">?곸꽭 罹붾뱾李⑦듃</h2>
         <p>
-          이메일 본문에서는 보안상 상호작용형 캔들차트를 직접 실행할 수 없습니다.
-          상세 캔들차트(일봉 3개월, 주봉 1년, 월봉 3년)와 거래량 그래프는 아래 대시보드에서 바로 확인하세요.
+          ?대찓??蹂몃Ц?먯꽌??蹂댁븞???곹샇?묒슜??罹붾뱾李⑦듃瑜?吏곸젒 ?ㅽ뻾?????놁뒿?덈떎.
+          ?곸꽭 罹붾뱾李⑦듃(?쇰큺 3媛쒖썡, 二쇰큺 1?? ?붾큺 3??? 嫄곕옒??洹몃옒?꾨뒗 ?꾨옒 ??쒕낫?쒖뿉??諛붾줈 ?뺤씤?섏꽭??
         </p>
-        <p><a href="{APP_BASE_URL}" style="display:inline-block;background:#0f766e;color:#fff;padding:10px 14px;text-decoration:none;border-radius:6px">대시보드에서 차트 보기</a></p>
+        <p><a href="{APP_BASE_URL}" style="display:inline-block;background:#0f766e;color:#fff;padding:10px 14px;text-decoration:none;border-radius:6px">??쒕낫?쒖뿉??李⑦듃 蹂닿린</a></p>
 
         <p style="margin-top:24px;color:#64748b;font-size:12px">
-          본 메일은 정보 제공 목적이며 투자 권유나 수익 보장을 의미하지 않습니다.
-          투자 결정과 결과의 책임은 투자자 본인에게 있으며, 시장 데이터는 지연되거나 오류가 발생할 수 있습니다.
+          蹂?硫붿씪? ?뺣낫 ?쒓났 紐⑹쟻?대ŉ ?ъ옄 沅뚯쑀???섏씡 蹂댁옣???섎??섏? ?딆뒿?덈떎.
+          ?ъ옄 寃곗젙怨?寃곌낵??梨낆엫? ?ъ옄??蹂몄씤?먭쾶 ?덉쑝硫? ?쒖옣 ?곗씠?곕뒗 吏?곕릺嫄곕굹 ?ㅻ쪟媛 諛쒖깮?????덉뒿?덈떎.
         </p>
       </body>
     </html>
@@ -614,7 +725,7 @@ def send_email_message(subject, html_body):
     message["Subject"] = subject
     message["From"] = sender
     message["To"] = ", ".join(recipients)
-    message.set_content("HTML 메일을 지원하는 클라이언트에서 오늘의 투자 브리핑을 확인하세요.")
+    message.set_content("HTML 硫붿씪??吏?먰븯???대씪?댁뼵?몄뿉???ㅻ뒛???ъ옄 釉뚮━?묒쓣 ?뺤씤?섏꽭??")
     message.add_alternative(html_body, subtype="html")
 
     host = os.environ.get("SMTP_HOST")
@@ -638,7 +749,7 @@ def send_email_message(subject, html_body):
 
 def send_daily_briefing():
     report = build_report_data()
-    subject = "오늘의 투자 브리핑 - Korea & US Investment Briefing"
+    subject = "?ㅻ뒛???ъ옄 釉뚮━??- Korea & US Investment Briefing"
     html_body = build_html_email(report)
     result = send_email_message(subject, html_body)
     print(f"[briefing-email] sent at {report['asOf']}: {result}")
@@ -752,18 +863,13 @@ class InvestmentBriefingHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def send_quotes(self):
-        quotes = {}
-        errors = {}
-        for ticker, yahoo_symbol in QUOTE_SYMBOLS.items():
-            try:
-                quotes[ticker] = fetch_quote(yahoo_symbol)
-            except Exception as error:
-                errors[ticker] = str(error)
+        quotes, errors = collect_parallel(QUOTE_SYMBOLS, lambda _ticker, yahoo_symbol: fetch_quote(yahoo_symbol))
         body = json.dumps(
             {
                 "source": "Yahoo Finance chart API",
                 "asOf": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "quotes": quotes,
+                "instruments": INSTRUMENTS,
                 "errors": errors,
             }
         ).encode("utf-8")
@@ -774,18 +880,17 @@ class InvestmentBriefingHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def send_analysis(self):
-        analysis = {}
-        errors = {}
-        for ticker in QUOTE_SYMBOLS:
-            try:
-                analysis[ticker] = analyze_ticker(ticker)
-            except Exception as error:
-                errors[ticker] = str(error)
+        analysis, errors = collect_parallel(QUOTE_SYMBOLS, lambda ticker, _yahoo_symbol: analyze_ticker(ticker))
         body = json.dumps(
             {
                 "source": "Yahoo Finance OHLCV",
                 "asOf": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "analysis": analysis,
+                "instruments": INSTRUMENTS,
+                "groups": {
+                    key: {"label": label, "market": market, "assetType": asset_type, "poolSize": pool_size_for(market, asset_type), "limit": limit}
+                    for key, label, market, asset_type, limit in GROUPS
+                },
                 "errors": errors,
             }
         ).encode("utf-8")
@@ -823,3 +928,4 @@ if __name__ == "__main__":
     server = ThreadingHTTPServer((host, port), InvestmentBriefingHandler)
     print(f"Serving investment briefing at http://{host}:{port}")
     server.serve_forever()
+
